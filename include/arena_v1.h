@@ -8,32 +8,32 @@
 #include <vector>
 #include <functional>
 #include <memory>
-
 inline constexpr size_t DEFAULT_BLOCK_SIZE = 1024;
 
-class Arena {
+[[deprecated("use arenav2 instead, that introduces stronger cache locality and reduced pointer indirection")]]
+class ArenaV1 {
 public:
-    explicit Arena() : tail(nullptr), block_size(DEFAULT_BLOCK_SIZE), arena_size(DEFAULT_BLOCK_SIZE) {
+    explicit ArenaV1() : tail(nullptr), block_size(DEFAULT_BLOCK_SIZE), arena_size(DEFAULT_BLOCK_SIZE) {
         add_mem_block(DEFAULT_BLOCK_SIZE);
     }
 
-    explicit Arena(const size_t size): tail(nullptr), block_size(size), arena_size(size) {
+    explicit ArenaV1(const size_t size): tail(nullptr), block_size(size), arena_size(size) {
         add_mem_block(size);
     };
 
-    ~Arena() {
+    ~ArenaV1() {
         cleanup();
     }
 
-    Arena(const Arena&) = delete;
-    Arena& operator=(const Arena&) = delete;
+    ArenaV1(const ArenaV1&) = delete;
+    ArenaV1& operator=(const ArenaV1&) = delete;
 
-    Arena(Arena&& other) noexcept : tail(other.tail), mem_blocks(std::move(other.mem_blocks)), block_size(other.block_size), arena_size(other.arena_size) {
+    ArenaV1(ArenaV1&& other) noexcept : tail(other.tail), mem_blocks(std::move(other.mem_blocks)), block_size(other.block_size), arena_size(other.arena_size) {
         other.tail = nullptr;
         other.arena_size = 0;
     };
 
-    Arena& operator=(Arena&& other) noexcept {
+    ArenaV1& operator=(ArenaV1&& other) noexcept {
         if (&other != this) {
             clear();
             this->block_size = other.block_size;

@@ -2,8 +2,8 @@
 // Created by Yeo Shu Heng on 2/12/25.
 //
 
-#ifndef ARENA_H
-#define ARENA_H
+#ifndef ARENAV2_H
+#define ARENAV2_H
 
 #include <vector>
 #include <functional>
@@ -12,24 +12,24 @@
 inline constexpr size_t DEFAULT_BLOCK_SIZE = 1024;
 inline constexpr size_t DESTRUCTOR_CHUNK_SIZE = 32;
 
-class Arena {
+class ArenaV2 {
 public:
-    explicit Arena() : block_size(DEFAULT_BLOCK_SIZE), arena_size(DEFAULT_BLOCK_SIZE) {
+    explicit ArenaV2() : block_size(DEFAULT_BLOCK_SIZE), arena_size(DEFAULT_BLOCK_SIZE) {
         add_mem_block(DEFAULT_BLOCK_SIZE);
     }
 
-    explicit Arena(const size_t size): block_size(size), arena_size(size) {
+    explicit ArenaV2(const size_t size): block_size(size), arena_size(size) {
         add_mem_block(size);
     };
 
-    ~Arena() {
+    ~ArenaV2() {
         clear();
     }
 
-    Arena(const Arena&) = delete;
-    Arena& operator=(const Arena&) = delete;
+    ArenaV2(const ArenaV2&) = delete;
+    ArenaV2& operator=(const ArenaV2&) = delete;
 
-    Arena(Arena&& other) noexcept :
+    ArenaV2(ArenaV2&& other) noexcept :
         destructor_block_tail(other.destructor_block_tail),
         destructor_block_latest(other.destructor_block_latest),
         mem_blocks(std::move(other.mem_blocks)),
@@ -42,7 +42,7 @@ public:
         other.arena_size = 0;
     };
 
-    Arena& operator=(Arena&& other) noexcept {
+    ArenaV2& operator=(ArenaV2&& other) noexcept {
         if (&other != this) {
             clear();
             this->block_size = other.block_size;
@@ -73,7 +73,7 @@ public:
     }
 
     void clear() {
-        DestructorMemBlock* curr = destructor_block_tail;
+        DestructorChunk* curr = destructor_block_tail;
         while (curr) {
             for (size_t i = 0; i < curr->n_nodes; i++) {
                 curr->nodes[i].fn(curr->nodes[i].obj);
@@ -108,10 +108,10 @@ private:
         void* obj;
     };
 
-    struct DestructorMemBlock {
+    struct DestructorChunk {
         DestructorNode nodes[DESTRUCTOR_CHUNK_SIZE];
         size_t n_nodes = 0;
-        DestructorMemBlock* next;
+        DestructorChunk* next;
     };
 
     struct MemBlock {
@@ -148,8 +148,8 @@ private:
         MemBlock& operator=(const MemBlock&) = delete;
     };
 
-    DestructorMemBlock* destructor_block_tail = nullptr;
-    DestructorMemBlock* destructor_block_latest = nullptr;
+    DestructorChunk* destructor_block_tail = nullptr;
+    DestructorChunk* destructor_block_latest = nullptr;
 
     std::vector<MemBlock> mem_blocks;
     MemBlock* mem_block_latest = nullptr;
@@ -195,8 +195,8 @@ private:
 
     inline void append_new_destructor(void* obj, void (*fn)(void*)) noexcept {
         if (!destructor_block_latest || destructor_block_latest->n_nodes == DESTRUCTOR_CHUNK_SIZE) {
-            void* ptr = allocate(sizeof(DestructorMemBlock), alignof(DestructorMemBlock));
-            DestructorMemBlock* dest_mb = new (ptr) DestructorMemBlock();
+            void* ptr = allocate(sizeof(DestructorChunk), alignof(DestructorChunk));
+            DestructorChunk* dest_mb = new (ptr) DestructorChunk();
             dest_mb->n_nodes = 0;
             dest_mb->next = destructor_block_tail;
             destructor_block_tail = destructor_block_latest = dest_mb;
@@ -208,4 +208,4 @@ private:
     }
 };
 
-#endif //ARENA_H
+#endif //ARENAV2_H
