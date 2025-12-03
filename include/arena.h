@@ -52,6 +52,7 @@ public:
             this->mem_blocks = std::move(other.mem_blocks);
             this->mem_block_latest = other.mem_block_latest;
 
+            other.mem_block_latest = nullptr;
             other.destructor_block_latest = nullptr;
             other.destructor_block_tail = nullptr;
             other.arena_size = 0;
