@@ -7,9 +7,29 @@ allocate dynamic memory from a pool of memory blocks. `Arena` also supports resi
 This reduces the need for expensive `malloc` overhead and heap fragmentation during run-time whilst simplifying 
 lifetime management for common objects.
 
-![resizable_alloc.png](assets/resizable_alloc_poor_cache_loc.png)
+![arenav2.png](assets/arenav2.png)
 
-### Dev Log
+## Dev Log
+
+### `ArenaV2`
+
+#### Improved cache locality
+In our original implementation, the ordering of destructor nodes are stored in a linked list across multiple 
+memory blocks. The layout of ArenaV1:
+
+![arenav1.png](assets/arenav1.png)
+
+Unfortunately, when we clear `mem_blocks`, this requires us to manually traverse the linked list sequentially,
+ where the linked list spans multiple `MemBlock`s.
+
+To improve cache locality, we keep multiple `DestructorNode` in chunks of contiguous memory, `DestructorChunk`, and 
+ maintain a linked list of `DestructorChunk` instead. This allows us to have flexibility in allocating more memory for
+`DestructorNode`s whilst maintaining cache locality.
+
+#### Reduced pointer indirection
+We now directly track pointers to latest `MemBlock` and `DestructorNode`, allowing for faster access.
+
+### `ArenaV1`
 
 #### Removed virtual destructors
 The destructor functions within each `DestructorBlock` were originally kept as type-erased virtual functions. 
@@ -36,14 +56,5 @@ While this allowed for RAII, it also resulted in indirection penalty. Since the 
 our `Arena` is tied to each `MemBlock`, we never need to worry about sharing the pointer to other 
 objects. Hence, paying this penalty is not really necessary. 
 
-In the revised implementation, we allow the `Arena` to hold raw pointers to `MemBlock`, 
- and we introduce a `cleanup` function for manual frees.
-
-```c++
-inline void cleanup() noexcept {
-    clear();
-    for (const MemBlock* blk : mem_blocks) {
-        delete blk;
-    }
-}
-```
+In the revised implementation, we allow the `Arena` to directly own `MemBlock`, and allow it to be
+ automatically freed when `mem_blocks` is freed.

@@ -2,46 +2,59 @@
 // Created by Yeo Shu Heng on 2/12/25.
 //
 
-#ifndef ARENA_H
-#define ARENA_H
+#ifndef ARENAV2_H
+#define ARENAV2_H
 
 #include <vector>
 #include <functional>
 #include <memory>
 
 inline constexpr size_t DEFAULT_BLOCK_SIZE = 1024;
+inline constexpr size_t DESTRUCTOR_CHUNK_SIZE = 32;
 
-class Arena {
+class ArenaV2 {
 public:
-    explicit Arena() : tail(nullptr), block_size(DEFAULT_BLOCK_SIZE), arena_size(DEFAULT_BLOCK_SIZE) {
+    explicit ArenaV2() : block_size(DEFAULT_BLOCK_SIZE), arena_size(DEFAULT_BLOCK_SIZE) {
         add_mem_block(DEFAULT_BLOCK_SIZE);
     }
 
-    explicit Arena(const size_t size): tail(nullptr), block_size(size), arena_size(size) {
+    explicit ArenaV2(const size_t size): block_size(size), arena_size(size) {
         add_mem_block(size);
     };
 
-    ~Arena() {
-        cleanup();
+    ~ArenaV2() {
+        clear();
     }
 
-    Arena(const Arena&) = delete;
-    Arena& operator=(const Arena&) = delete;
+    ArenaV2(const ArenaV2&) = delete;
+    ArenaV2& operator=(const ArenaV2&) = delete;
 
-    Arena(Arena&& other) noexcept : tail(other.tail), mem_blocks(std::move(other.mem_blocks)), block_size(other.block_size), arena_size(other.arena_size) {
-        other.tail = nullptr;
+    ArenaV2(ArenaV2&& other) noexcept :
+        destructor_block_tail(other.destructor_block_tail),
+        destructor_block_latest(other.destructor_block_latest),
+        mem_blocks(std::move(other.mem_blocks)),
+        mem_block_latest(other.mem_block_latest),
+        block_size(other.block_size),
+        arena_size(other.arena_size) {
+        other.destructor_block_latest = nullptr;
+        other.destructor_block_tail = nullptr;
+        other.mem_block_latest = nullptr;
         other.arena_size = 0;
     };
 
-    Arena& operator=(Arena&& other) noexcept {
+    ArenaV2& operator=(ArenaV2&& other) noexcept {
         if (&other != this) {
             clear();
             this->block_size = other.block_size;
             this->arena_size = other.arena_size;
-            this->tail = other.tail;
+            this->destructor_block_latest = other.destructor_block_latest;
+            this->destructor_block_tail = other.destructor_block_tail;
             this->mem_blocks = std::move(other.mem_blocks);
+            this->mem_block_latest = other.mem_block_latest;
 
-            other.tail = nullptr;
+            other.mem_block_latest = nullptr;
+            other.destructor_block_latest = nullptr;
+            other.destructor_block_tail = nullptr;
             other.arena_size = 0;
         }
         return *this;
@@ -60,16 +73,23 @@ public:
     }
 
     void clear() {
-        DestructorBlock* d = tail;
-        while (d) {
-            d->fn(d->obj);
-            d = d->next;
+        DestructorChunk* curr = destructor_block_tail;
+        while (curr) {
+            for (size_t i = 0; i < curr->n_nodes; i++) {
+                curr->nodes[i].fn(curr->nodes[i].obj);
+            }
+            curr->n_nodes = 0;
+            curr = curr->next;
         }
 
-        tail = nullptr;
+        for (MemBlock& mb : mem_blocks) {
+            mb.offset = 0;
+        }
 
-        for (MemBlock* blk : mem_blocks) {
-            blk->offset = 0;
+        if (!mem_blocks.empty()) {
+            mem_block_latest = &mem_blocks.front();
+        } else {
+            mem_block_latest = nullptr;
         }
     }
 
@@ -83,10 +103,15 @@ private:
         static_cast<T*>(p)->~T();
     }
 
-    struct DestructorBlock {
+    struct DestructorNode {
         void (*fn)(void*);
         void* obj;
-        DestructorBlock* next;
+    };
+
+    struct DestructorChunk {
+        DestructorNode nodes[DESTRUCTOR_CHUNK_SIZE];
+        size_t n_nodes = 0;
+        DestructorChunk* next;
     };
 
     struct MemBlock {
@@ -123,25 +148,23 @@ private:
         MemBlock& operator=(const MemBlock&) = delete;
     };
 
-    DestructorBlock* tail;
-    std::vector<MemBlock*> mem_blocks;
+    DestructorChunk* destructor_block_tail = nullptr;
+    DestructorChunk* destructor_block_latest = nullptr;
+
+    std::vector<MemBlock> mem_blocks;
+    MemBlock* mem_block_latest = nullptr;
+
     size_t block_size;
     size_t arena_size;
 
     inline void add_mem_block(const size_t size) noexcept {
-        mem_blocks.push_back(new MemBlock(size));
+        mem_blocks.emplace_back(size);
+        mem_block_latest = &mem_blocks.back();
     };
-
-    inline void cleanup() noexcept {
-        clear();
-        for (const MemBlock* blk : mem_blocks) {
-            delete blk;
-        }
-    }
 
     inline void* allocate(const size_t size, const size_t align) noexcept {
         void* p;
-        if ((p = allocate_from_mem_block(*mem_blocks.back(), size, align))) {
+        if ((p = allocate_from_mem_block(*mem_block_latest, size, align))) {
             return p;
         }
 
@@ -149,7 +172,7 @@ private:
         add_mem_block(new_block_size);
         arena_size += new_block_size;
 
-        p = allocate_from_mem_block(*mem_blocks.back(), size, align);
+        p = allocate_from_mem_block(*mem_block_latest, size, align);
         return p;
     }
 
@@ -171,12 +194,18 @@ private:
     }
 
     inline void append_new_destructor(void* obj, void (*fn)(void*)) noexcept {
-        DestructorBlock* dn = static_cast<DestructorBlock *>(allocate(sizeof(DestructorBlock), alignof(DestructorBlock)));
-        dn->fn = fn;
-        dn->next = tail;
-        dn->obj = obj;
-        tail = dn;
+        if (!destructor_block_latest || destructor_block_latest->n_nodes == DESTRUCTOR_CHUNK_SIZE) {
+            void* ptr = allocate(sizeof(DestructorChunk), alignof(DestructorChunk));
+            DestructorChunk* dest_mb = new (ptr) DestructorChunk();
+            dest_mb->n_nodes = 0;
+            dest_mb->next = destructor_block_tail;
+            destructor_block_tail = destructor_block_latest = dest_mb;
+        }
+
+        DestructorNode& node = destructor_block_latest->nodes[destructor_block_latest->n_nodes++];
+        node.fn = fn;
+        node.obj = obj;
     }
 };
 
-#endif //ARENA_H
+#endif //ARENAV2_H
