@@ -5,7 +5,7 @@
 #ifndef ARENAV2_H
 #define ARENAV2_H
 
-#include <vector>
+#include <deque.h>
 #include <functional>
 #include <memory>
 
@@ -14,11 +14,11 @@ inline constexpr size_t DESTRUCTOR_CHUNK_SIZE = 32;
 
 class ArenaV2 {
 public:
-    explicit ArenaV2() : block_size(DEFAULT_BLOCK_SIZE), arena_size(DEFAULT_BLOCK_SIZE) {
+    explicit ArenaV2() : block_size(DEFAULT_BLOCK_SIZE), arena_size(0) {
         add_mem_block(DEFAULT_BLOCK_SIZE);
     }
 
-    explicit ArenaV2(const size_t size): block_size(size), arena_size(size) {
+    explicit ArenaV2(const size_t size): block_size(size), arena_size(0) {
         add_mem_block(size);
     };
 
@@ -73,14 +73,16 @@ public:
     }
 
     void clear() {
-        DestructorChunk* curr = destructor_block_tail;
+        DestructorChunk* curr = destructor_block_latest;
         while (curr) {
-            for (size_t i = 0; i < curr->n_nodes; i++) {
-                curr->nodes[i].fn(curr->nodes[i].obj);
+            for (size_t i = curr->n_nodes; i > 0; i--) {
+                curr->nodes[i - 1].fn(curr->nodes[i - 1].obj);
             }
-            curr->n_nodes = 0;
-            curr = curr->next;
+            curr = curr->prev;
         }
+
+        destructor_block_latest = nullptr;
+        destructor_block_tail = nullptr;
 
         for (MemBlock& mb : mem_blocks) {
             mb.offset = 0;
@@ -111,7 +113,7 @@ private:
     struct DestructorChunk {
         DestructorNode nodes[DESTRUCTOR_CHUNK_SIZE];
         size_t n_nodes = 0;
-        DestructorChunk* next;
+        DestructorChunk* prev;
     };
 
     struct MemBlock {
@@ -151,7 +153,7 @@ private:
     DestructorChunk* destructor_block_tail = nullptr;
     DestructorChunk* destructor_block_latest = nullptr;
 
-    std::vector<MemBlock> mem_blocks;
+    std::deque<MemBlock> mem_blocks;
     MemBlock* mem_block_latest = nullptr;
 
     size_t block_size;
@@ -160,6 +162,7 @@ private:
     inline void add_mem_block(const size_t size) noexcept {
         mem_blocks.emplace_back(size);
         mem_block_latest = &mem_blocks.back();
+        arena_size += size;
     };
 
     inline void* allocate(const size_t size, const size_t align) noexcept {
@@ -168,9 +171,8 @@ private:
             return p;
         }
 
-        const size_t new_block_size = std::max(size + align, block_size * 2);
+        const size_t new_block_size = std::max(size + align - 1, block_size);
         add_mem_block(new_block_size);
-        arena_size += new_block_size;
 
         p = allocate_from_mem_block(*mem_block_latest, size, align);
         return p;
@@ -198,8 +200,13 @@ private:
             void* ptr = allocate(sizeof(DestructorChunk), alignof(DestructorChunk));
             DestructorChunk* dest_mb = new (ptr) DestructorChunk();
             dest_mb->n_nodes = 0;
-            dest_mb->next = destructor_block_tail;
-            destructor_block_tail = destructor_block_latest = dest_mb;
+            dest_mb->prev = destructor_block_latest;
+
+            if (!destructor_block_latest) {
+                destructor_block_tail = dest_mb;
+            }
+
+            destructor_block_latest = dest_mb;
         }
 
         DestructorNode& node = destructor_block_latest->nodes[destructor_block_latest->n_nodes++];
