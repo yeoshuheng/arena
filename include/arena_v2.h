@@ -171,10 +171,15 @@ private:
             return p;
         }
 
+        return add_new_block_and_allocate(size, align);
+    }
+
+    __attribute__((noinline))
+    void* add_new_block_and_allocate(const size_t size, const size_t align) noexcept {
         const size_t new_block_size = std::max(size + align - 1, block_size);
         add_mem_block(new_block_size);
 
-        p = allocate_from_mem_block(*mem_block_latest, size, align);
+        void* p = allocate_from_mem_block(*mem_block_latest, size, align);
         return p;
     }
 
