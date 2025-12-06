@@ -14,11 +14,11 @@ inline constexpr size_t DESTRUCTOR_CHUNK_SIZE = 32;
 
 class ArenaV2 {
 public:
-    explicit ArenaV2() : block_size(DEFAULT_BLOCK_SIZE), arena_size(DEFAULT_BLOCK_SIZE) {
+    explicit ArenaV2() : mem_block_latest_idx(0), block_size(DEFAULT_BLOCK_SIZE), arena_size(0) {
         add_mem_block(DEFAULT_BLOCK_SIZE);
     }
 
-    explicit ArenaV2(const size_t size): block_size(size), arena_size(size) {
+    explicit ArenaV2(const size_t size) : mem_block_latest_idx(0), block_size(size), arena_size(0) {
         add_mem_block(size);
     };
 
@@ -33,12 +33,12 @@ public:
         destructor_block_tail(other.destructor_block_tail),
         destructor_block_latest(other.destructor_block_latest),
         mem_blocks(std::move(other.mem_blocks)),
-        mem_block_latest(other.mem_block_latest),
+        mem_block_latest_idx(other.mem_block_latest_idx),
         block_size(other.block_size),
         arena_size(other.arena_size) {
         other.destructor_block_latest = nullptr;
         other.destructor_block_tail = nullptr;
-        other.mem_block_latest = nullptr;
+        other.mem_block_latest_idx = 0;
         other.arena_size = 0;
     };
 
@@ -50,9 +50,9 @@ public:
             this->destructor_block_latest = other.destructor_block_latest;
             this->destructor_block_tail = other.destructor_block_tail;
             this->mem_blocks = std::move(other.mem_blocks);
-            this->mem_block_latest = other.mem_block_latest;
+            this->mem_block_latest_idx = other.mem_block_latest_idx;
 
-            other.mem_block_latest = nullptr;
+            other.mem_block_latest_idx = 0;
             other.destructor_block_latest = nullptr;
             other.destructor_block_tail = nullptr;
             other.arena_size = 0;
@@ -73,24 +73,26 @@ public:
     }
 
     void clear() {
-        DestructorChunk* curr = destructor_block_tail;
+        DestructorChunk* curr = destructor_block_latest;
         while (curr) {
-            for (size_t i = 0; i < curr->n_nodes; i++) {
-                curr->nodes[i].fn(curr->nodes[i].obj);
+            for (size_t i = curr->n_nodes; i > 0; i--) {
+                curr->nodes[i - 1].fn(curr->nodes[i - 1].obj);
             }
-            curr->n_nodes = 0;
-            curr = curr->next;
+            curr = curr->prev;
         }
+
+        destructor_block_latest = nullptr;
+        destructor_block_tail = nullptr;
 
         for (MemBlock& mb : mem_blocks) {
             mb.offset = 0;
         }
 
-        if (!mem_blocks.empty()) {
-            mem_block_latest = &mem_blocks.front();
-        } else {
-            mem_block_latest = nullptr;
-        }
+        mem_block_latest_idx = 0;
+    }
+
+    void* allocate_raw(const size_t size, const size_t align) noexcept {
+        return allocate(size, align);
     }
 
     [[nodiscard]] size_t get_arena_size() const {return arena_size;}
@@ -109,9 +111,9 @@ private:
     };
 
     struct DestructorChunk {
-        DestructorNode nodes[DESTRUCTOR_CHUNK_SIZE];
+        DestructorNode nodes[DESTRUCTOR_CHUNK_SIZE]{};
         size_t n_nodes = 0;
-        DestructorChunk* next;
+        DestructorChunk* prev{};
     };
 
     struct MemBlock {
@@ -152,54 +154,67 @@ private:
     DestructorChunk* destructor_block_latest = nullptr;
 
     std::vector<MemBlock> mem_blocks;
-    MemBlock* mem_block_latest = nullptr;
+    size_t mem_block_latest_idx;
 
     size_t block_size;
     size_t arena_size;
 
     inline void add_mem_block(const size_t size) noexcept {
         mem_blocks.emplace_back(size);
-        mem_block_latest = &mem_blocks.back();
+        mem_block_latest_idx = mem_blocks.size() - 1;
+        arena_size += size;
     };
 
     inline void* allocate(const size_t size, const size_t align) noexcept {
-        void* p;
-        if ((p = allocate_from_mem_block(*mem_block_latest, size, align))) {
-            return p;
+        MemBlock& mb = mem_blocks[mem_block_latest_idx];
+
+        if (const size_t potential_offset = mb.offset + size; potential_offset <= mb.size) [[likely]] {
+            if (void* const ptr = mb.buffer + mb.offset; (reinterpret_cast<uintptr_t>(ptr) & (align - 1)) == 0) [[likely]] {
+                mb.offset = potential_offset;
+                return ptr;
+            }
         }
 
-        const size_t new_block_size = std::max(size + align, block_size * 2);
-        add_mem_block(new_block_size);
-        arena_size += new_block_size;
+        if (void* ptr = allocate_from_mem_block(mb, size, align)) [[likely]] {
+            return ptr;
+        }
 
-        p = allocate_from_mem_block(*mem_block_latest, size, align);
+        return add_new_block_and_allocate(size, align);
+    }
+
+    __attribute__((noinline))
+    void* add_new_block_and_allocate(const size_t size, const size_t align) noexcept {
+        const size_t new_block_size = std::max(size + align - 1, block_size);
+        add_mem_block(new_block_size);
+
+        void* p = allocate_from_mem_block(mem_blocks[mem_block_latest_idx], size, align);
         return p;
     }
 
     static inline void* allocate_from_mem_block(MemBlock& mem_block, const size_t size, const size_t align) noexcept {
-        const size_t curr_offset = mem_block.offset;
-        size_t remaining_space = mem_block.size - mem_block.offset;
-        void* ptr = mem_block.buffer + curr_offset;
+        const uintptr_t curr = reinterpret_cast<uintptr_t>(mem_block.buffer + mem_block.offset);
+        const uintptr_t aligned = (curr + align - 1) & ~(align - 1);
+        const size_t padding = aligned - curr;
+        const size_t new_offset = mem_block.offset + padding + size;
 
-        void* aligned_ptr = ptr;
-
-        if (!std::align(align, size, aligned_ptr, remaining_space)) return nullptr;
-
-        const size_t new_offset = static_cast<char*>(aligned_ptr) - mem_block.buffer + size;
-
-        if (new_offset > mem_block.size) return nullptr;
+        if (new_offset > mem_block.size) [[unlikely]] return nullptr;
 
         mem_block.offset = new_offset;
-        return aligned_ptr;
+        return reinterpret_cast<void*>(aligned);
     }
 
     inline void append_new_destructor(void* obj, void (*fn)(void*)) noexcept {
-        if (!destructor_block_latest || destructor_block_latest->n_nodes == DESTRUCTOR_CHUNK_SIZE) {
+        if (!destructor_block_latest || destructor_block_latest->n_nodes == DESTRUCTOR_CHUNK_SIZE) [[unlikely]] {
             void* ptr = allocate(sizeof(DestructorChunk), alignof(DestructorChunk));
             DestructorChunk* dest_mb = new (ptr) DestructorChunk();
             dest_mb->n_nodes = 0;
-            dest_mb->next = destructor_block_tail;
-            destructor_block_tail = destructor_block_latest = dest_mb;
+            dest_mb->prev = destructor_block_latest;
+
+            if (!destructor_block_latest) {
+                destructor_block_tail = dest_mb;
+            }
+
+            destructor_block_latest = dest_mb;
         }
 
         DestructorNode& node = destructor_block_latest->nodes[destructor_block_latest->n_nodes++];

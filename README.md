@@ -26,8 +26,36 @@ To improve cache locality, we keep multiple `DestructorNode` in chunks of contig
  maintain a linked list of `DestructorChunk` instead. This allows us to have flexibility in allocating more memory for
 `DestructorNode`s whilst maintaining cache locality.
 
+#### Manual alignment calculation
+Instead of relying on `std::align` to find aligned addresses, we manually 
+calculate the alignment based on bit masking. This trick works on the fact that subtracting 1 on a binary bitstring flips 
+all bits after that 1 bit, and `alignof` gives us the memory alignment requirement, which is always in powers of 2. 
+
+```c++
+ const uintptr_t curr = reinterpret_cast<uintptr_t>(mem_block.buffer + mem_block.offset);
+ const uintptr_t aligned = (curr + align - 1) & ~(align - 1);
+```
+
+`(curr + align - 1)` rounds the address to the next boundary, then we use `~(align-1)` to create 
+an inverted mask of the lower bits. We use this mask to clear the lower bits to force alignment.
+
+Likewise, we use the similar concept to check for the number of bytes we are past the last aligned address.
+```c++
+(reinterpret_cast<uintptr_t>(ptr) & (align - 1)) == 0
+```
+
+This is faster because there is no longer function call overhead from `std::align`, additionally
+ we utilise fewer instructions as compared to the internals of `std::align`.
+
+#### Compiler friendly code
+Hot path is now kept in line and cold path is moved to a separate function with in-lining explicitly disabled. This enables
+better utilization of instruction caches. 
+
+Hot and cold paths are also marked with compiler attributes, this allows compiler to how often we expect
+ code branch to be executed at runtime, allowing for better code layout and branch prediction.
+
 #### Reduced pointer indirection
-We now directly track pointers to latest `MemBlock` and `DestructorNode`, allowing for faster access.
+We now directly track the index of the latest `MemBlock` and `DestructorNode`, allowing for faster access.
 
 ### `ArenaV1`
 
