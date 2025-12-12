@@ -15,7 +15,7 @@ Arena integrates with the C++ standard library through `ArenaAllocator<T>`,
 
 ## Features
 
-- **Extremely fast allocation** using bump-pointer arithmetic (often just a few CPU instructions)
+- **Extremely fast allocation** using bump-pointer arithmetic (~5–10 CPU instructions per allocation)
 - **No heap fragmentation** — all memory is carved from linear blocks.
 - **Automatic block growth** when more memory is needed
 - **Simple lifetime management** — free everything at once by resetting or destroying the arena
