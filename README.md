@@ -9,6 +9,40 @@ lifetime management for common objects.
 
 ![arenav2.png](assets/arenav2.png)
 
+
+## Using Arena
+`ArenaV2` can be used directly with STL containers,
+```c++
+#include "arena.h"
+#include "allocator.h"
+
+ ArenaV2 arena(65536);
+ 
+ std::unordered_map<int, int, std::hash<int>, std::equal_to<int>, ArenaAllocator<std::pair<const int, int>>> map(10, std::hash<int>(), std::equal_to<int>(), ArenaAllocator<std::pair<const int, int>>(arena));
+ std::list<int, ArenaAllocator<int>> lst{ArenaAllocator<int>(arena)};
+ std::vector<int, ArenaAllocator<int>> vec{ArenaAllocator<int>(arena)};
+ std::map<int, int, std::less<int>, ArenaAllocator<std::pair<const int, int>>> map{std::less<int>(),ArenaAllocator<std::pair<const int, int>>(arena)};
+```
+It can also be used as a standalone memory pool.
+```c++
+
+```
+
+## Benchmarks
+We benchmark insert operations in STL containers against the standard GNU malloc.
+
+| Container         | Size | GNU Malloc (ns) | Arena Alloc (ns) | Speedup |
+|-------------------|------|---------------------|-----------------------|---------|
+| **std::vector**   | 1024 | 908 ns              | 539 ns                | **1.68×** |
+| **std::vector**        | 4096 | 2793 ns             | 2127 ns               | **1.31×** |
+| **std::list**          | 1024 | 18,370 ns           | 3,312 ns              | **5.55×** |
+| **std::list**          | 4096 | 77,110 ns           | 13,036 ns             | **5.91×** |
+| **std::unordered_map** | 1024 | 24,357 ns           | 7,487 ns              | **3.25×** |
+| **std::unordered_map** | 4096 | 101,346 ns          | 30,498 ns             | **3.32×** |
+| **std::map**           | 1024 | 42,886 ns           | 22,516 ns             | **1.90×** |
+| **std::map**           | 4096 | 175,753 ns          | 94,429 ns             | **1.86×** |
+
+
 ## Dev Log
 
 ### `ArenaV2`
