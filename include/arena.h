@@ -68,14 +68,12 @@ public:
     * @brief Moves ownership of memory blocks and destructor lists.
     */
     ArenaV2(ArenaV2&& other) noexcept :
-        destructor_block_tail(other.destructor_block_tail),
         destructor_block_latest(other.destructor_block_latest),
         mem_blocks(std::move(other.mem_blocks)),
         mem_block_latest_idx(other.mem_block_latest_idx),
         block_size(other.block_size),
         arena_size(other.arena_size) {
         other.destructor_block_latest = nullptr;
-        other.destructor_block_tail = nullptr;
         other.mem_block_latest_idx = 0;
         other.arena_size = 0;
     };
@@ -91,13 +89,11 @@ public:
             this->block_size = other.block_size;
             this->arena_size = other.arena_size;
             this->destructor_block_latest = other.destructor_block_latest;
-            this->destructor_block_tail = other.destructor_block_tail;
             this->mem_blocks = std::move(other.mem_blocks);
             this->mem_block_latest_idx = other.mem_block_latest_idx;
 
             other.mem_block_latest_idx = 0;
             other.destructor_block_latest = nullptr;
-            other.destructor_block_tail = nullptr;
             other.arena_size = 0;
         }
         return *this;
@@ -144,7 +140,6 @@ public:
         }
 
         destructor_block_latest = nullptr;
-        destructor_block_tail = nullptr;
 
         for (MemBlock& mb : mem_blocks) {
             mb.offset = 0;
@@ -246,13 +241,30 @@ private:
         MemBlock& operator=(const MemBlock&) = delete;
     };
 
-    DestructorChunk* destructor_block_tail = nullptr;
+    /**
+     * Tracks the location to add the latest destructor block as well as to remove destructor blocks.
+     */
     DestructorChunk* destructor_block_latest = nullptr;
 
+    /**
+     * Tracks memory blocks
+     */
     std::vector<MemBlock> mem_blocks;
+
+    /**
+     * Tracks index of the latest memory block.
+     * Pointers are not used to avoid dangling references if vector resizes.
+     */
     size_t mem_block_latest_idx;
 
+    /**
+     * Minimal size of new memory blocks added.
+     */
     size_t block_size;
+
+    /**
+     * Current size of the arena.
+     */
     size_t arena_size;
 
     /**
@@ -376,10 +388,6 @@ private:
             DestructorChunk* dest_mb = new (ptr) DestructorChunk();
             dest_mb->n_nodes = 0;
             dest_mb->prev = destructor_block_latest;
-
-            if (!destructor_block_latest) {
-                destructor_block_tail = dest_mb;
-            }
 
             destructor_block_latest = dest_mb;
         }

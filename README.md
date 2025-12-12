@@ -1,14 +1,52 @@
 # Arena
 
-`Arena` is a header-only thread-local arena allocator for C++23 that uses bump pointers to 
-allocate dynamic memory from a pool of memory blocks. `Arena` also supports resizing logic by dynamically
- claiming more memory blocks when needed.
+`ArenaV2` is a lightweight, header-only, **monotonic allocator** 
+ for C++23 designed for memory-intensive workloads. 
+ It uses a bump-pointer strategy to service 
+ dynamic allocations from a pool of contiguous memory blocks to reduce allocation overhead.
 
-This reduces the need for expensive `malloc` overhead and heap fragmentation during run-time whilst simplifying 
-lifetime management for common objects.
+Arena integrates with the C++ standard library through `ArenaAllocator<T>`, 
+ allowing STL containers to allocate memory directly from the arena without modification.
+
 
 ![arenav2.png](assets/arenav2.png)
 
+---
+
+## Features
+
+- **Extremely fast allocation** using bump-pointer arithmetic (often just a few CPU instructions)
+- **No heap fragmentation** — all memory is carved from linear blocks.
+- **Automatic block growth** when more memory is needed
+- **Simple lifetime management** — free everything at once by resetting or destroying the arena
+- **Fully STL compatible** via `ArenaAllocator<T>`
+- **Header-only** with zero external dependencies
+
+---
+
+## How It Works
+
+`ArenaV2` maintains one or more memory blocks obtained from the system allocator. Each allocation simply:
+
+1. Aligns the bump pointer
+2. Returns the current pointer
+3. Advances the bump pointer
+
+If a block runs out of space, Arena silently acquires a new block and continues allocating from there, this allows allocation to be:
+
+- **O(1)**
+- **Serializable and cache-friendly**
+- **Faster than `malloc` or `new`** (see benchmarks), which involve locks, metadata, and fragmentation handling
+---
+
+## Use Cases
+
+Arena is ideal for any workload where:
+
+- Many small objects are created temporarily
+- Lifetime of all the objects can be tied to the same scope
+- Heap fragmentation or allocator overhead is a performance concern
+---
 
 ## Using Arena
 `ArenaV2` can be used directly with STL containers,
@@ -25,8 +63,16 @@ lifetime management for common objects.
 ```
 It can also be used as a standalone memory pool.
 ```c++
+struct TestObject {
+    int x, y;
+    Foo(int x, int y) : x(x), y(y) {}
+};
 
+ArenaV2 arena(32 * 1024);
+TestObject* f = arena.create<TestObject>(10, 20);
 ```
+
+---
 
 ## Benchmarks
 We benchmark insert operations in STL containers against the standard GNU malloc.
@@ -42,7 +88,7 @@ We benchmark insert operations in STL containers against the standard GNU malloc
 | **std::map**           | 1024 | 42,886 ns           | 22,516 ns             | **1.90×** |
 | **std::map**           | 4096 | 175,753 ns          | 94,429 ns             | **1.86×** |
 
-
+---
 ## Dev Log
 
 ### `ArenaV2`
