@@ -65,7 +65,7 @@ It can also be used as a standalone memory pool.
 ```c++
 struct TestObject {
     int x, y;
-    Foo(int x, int y) : x(x), y(y) {}
+    TestObject(int x, int y) : x(x), y(y) {}
 };
 
 ArenaV2 arena(32 * 1024);
