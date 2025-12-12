@@ -75,7 +75,7 @@ TestObject* f = arena.create<TestObject>(10, 20);
 ---
 
 ## Benchmarks
-We benchmark insert operations in STL containers against the standard GNU malloc, `ArenaV2` is on average ~3.1x faster across the STL containers.
+We benchmark insert operations in STL containers against the standard GNU `malloc`, `ArenaV2` is on average **~3.1x faster** across the STL containers.
 
 | Container         | Size | GNU Malloc (ns) | Arena Alloc (ns) | Speedup |
 |-------------------|------|---------------------|-----------------------|---------|
