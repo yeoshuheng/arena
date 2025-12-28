@@ -3,7 +3,6 @@
 #include <list>
 #include <unordered_map>
 #include "../include/arena.h"
-#include "../include/allocator.h"
 
 constexpr int64_t BENCHMARK_RANGE_START = 1<<10;
 constexpr int64_t BENCHMARK_RANGE_END = 1<<12;

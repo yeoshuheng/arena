@@ -25,7 +25,6 @@ FetchContent_MakeAvailable(googletest)
 
 add_library(arena INTERFACE
         include/arena.h
-        include/allocator.h
 )
 
 target_include_directories(arena INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
